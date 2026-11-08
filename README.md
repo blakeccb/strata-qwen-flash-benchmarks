@@ -105,6 +105,61 @@ python3 scripts/validate_results.py
 
 [逐次长上下文数据](data/mtp-long.jsonl) 包含预填充、耗时、token、草稿及接受数；[短请求并发记录](data/short-concurrency.jsonl) 包含早期探索性测试，但各历史运行的完整配置未全部保存。短请求与合成标记测试不能证明复杂推理、工具调用、图像理解、两个 256K 请求并发、自然结束或长期稳定性。草稿接受率不等于答案正确率。新测试记录时间、模型、请求哈希和自填配置标签；标签不是对实际运行参数的自动验证。建议对 0.3 / 0.5 多次交替测试，记录配置、温度、故障和完整请求耗时。
 
+### 完整性能指标与逐次结果
+
+下表均值按每次请求的指标直接算术平均；草稿接受率使用各次 `draft_n_accepted` 之和除以 `draft_n` 之和。预填充速率是引擎报告的 prompt token/s，预填充时间来自 `prompt_ms`；总耗时由客户端计时，包含处理开销。所有本表请求均为零缓存输入、512 token 输出并以 `length` 结束。它们不是首 token 延迟（TTFT）或真实任务完成时间。
+
+| 窗口 / 阈值 | 次数 | 预填充 token/s | 预填充秒 | 生成 token/s | 生成秒 | 总耗时秒 | 接受 / 草稿 | 接受率 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 / default | 3 | 6940.1 | 37.36 | 89.5 | 5.74 | 43.39 | 864 / 2010 | 43.0% |
+| 4 / 0.3 | 3 | 6953.5 | 37.29 | 99.2 | 5.17 | 42.74 | 918 / 1669 | 55.0% |
+| 5 / 0.3 | 3 | 6901.5 | 37.57 | 101.9 | 5.03 | 42.89 | 987 / 1929 | 51.2% |
+| 5 / 0.5 | 4 | 6892.9 | 37.62 | 106.5 | 4.82 | 42.73 | 1248 / 2009 | 62.1% |
+| 6 / default | 1 | 6940.7 | 37.36 | 86.4 | 5.93 | 43.57 | 333 / 881 | 37.8% |
+
+以下逐次数据便于检查波动；输入 token 数和输出、结束状态均保存在 [JSONL 原始数值](data/mtp-long.jsonl)。`spec5p03a` 为加载期 502，未进入下表。
+
+| 运行标签 | 输入 token | 预填充 token/s | 预填充秒 | 生成 token/s | 总耗时秒 | 接受 / 草稿 |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 259,288 | 6997.9 | 37.05 | 90.7 | 42.98 | 296 / 645 |
+| baselineagain | 259,289 | 6899.6 | 37.58 | 82.3 | 44.08 | 273 / 717 |
+| baselinefinal | 259,289 | 6922.9 | 37.45 | 95.4 | 43.10 | 295 / 648 |
+| spec4p03 | 259,292 | 6929.7 | 37.42 | 95.4 | 43.07 | 303 / 568 |
+| spec4p03repeat | 259,293 | 6989.2 | 37.10 | 105.6 | 42.22 | 309 / 546 |
+| spec4p03final | 259,293 | 6941.6 | 37.35 | 96.7 | 42.93 | 306 / 555 |
+| spec5p03b | 259,293 | 6902.5 | 37.57 | 96.6 | 43.15 | 329 / 634 |
+| spec5p03c | 259,293 | 6965.5 | 37.23 | 107.9 | 42.25 | 334 / 620 |
+| spec5p03d | 259,293 | 6836.4 | 37.93 | 101.3 | 43.26 | 324 / 675 |
+| spec5p05a | 259,293 | 6865.0 | 37.77 | 97.1 | 43.33 | 299 / 506 |
+| spec5p05b | 259,293 | 6914.5 | 37.50 | 106.2 | 42.60 | 314 / 514 |
+| spec5p05c | 259,293 | 6891.6 | 37.62 | 110.6 | 42.54 | 316 / 499 |
+| spec5p05d | 259,293 | 6900.4 | 37.58 | 112.0 | 42.43 | 319 / 490 |
+| spec6 | 259,289 | 6940.7 | 37.36 | 86.4 | 43.57 | 333 / 881 |
+
+**其他历史长文本请求**（各一次，配置未完整保存，不纳入上述 MTP 对照）：
+
+| 来源 | 输入 token | 输出 token | 预填充 token/s | 预填充秒 | 生成 token/s | 总耗时秒 | 结束 | 标记 |
+|---|---:|---:|---:|---:|---:|---:|---|---:|
+| long-30k.jsonl | 32,074 | 41 | 5117.9 | 6.27 | 104.7 | 6.72 | stop | 3/3 |
+| long-256k.jsonl | 259,277 | 41 | 6898.0 | 37.59 | 113.5 | 38.22 | stop | 3/3 |
+| long-upgrade-256k.jsonl | 259,282 | 35 | 6938.7 | 37.37 | 86.5 | 38.05 | stop | 3/3 |
+
+另有 [其他请求指标](data/additional-requests.jsonl)，包括历史长请求、多轮或多模态记录及冒烟请求的脱敏 usage、timings、结束原因与工具调用数量；仅凭文件名和返回结果不能确认每项测试通过，也不能确定缺失的配置。原始输出、请求正文和图片未公开。短请求的并发指标见 [short-concurrency.jsonl](data/short-concurrency.jsonl)；其配置信息不完整，不应与 256K 测试混为一谈。
+
+### 历史短请求与双请求指标
+
+下表是历史短输入测试：单请求每组 4 次、双请求每组 2 对；双请求合计速率按每对两个输出 token 之和除以该对墙钟耗时，再取两对的算术平均。历史配置并不完整，组名只是来源标签，不能作为受控调参对比或 256K 并发结果。
+
+| 来源标签 | 单请求生成 token/s | 单请求耗时秒 | 双请求墙钟秒 | 双请求合计 token/s |
+|---|---:|---:|---:|---:|
+| mtp-tune/batch-mtp.jsonl | 120.1 | 4.54 | 6.71 | 152.7 |
+| mtp-tune/spec4-default.jsonl | 127.0 | 4.33 | 6.69 | 153.1 |
+| mtp-tune/spec4-p03.jsonl | 125.0 | 4.38 | 6.71 | 152.6 |
+| mtp-tune/spec6-default.jsonl | 116.7 | 4.83 | 6.73 | 152.3 |
+| optimization/auto.jsonl | 81.6 | 6.84 | 16.23 | 63.3 |
+| optimization/before-auto.jsonl | 135.8 | 4.04 | 6.57 | 155.8 |
+| optimization/concurrency.jsonl | 124.5 | 4.43 | 6.69 | 153.2 |
+
 ### 后续评测建议
 
 对比参数时先保存配置，按 A/B/B/A 交替执行多轮冷请求，并记录时间、实际生效参数、缓存命中、预填充与解码速度、总耗时、温度、失败及重启。除合成输入外，还应使用经许可的长文档和中英文代码、推理、工具调用与多轮任务，单独核对输出正确性和自然完成情况。不要把个人文档、完整回复或密钥上传到公开仓库。`STRATA_CONFIG_LABEL` 仅供人工标注；改参数可能需要重启，并须在每轮确认实际状态。
@@ -217,6 +272,61 @@ At window 5, the 0.5 mean was about 4.4% higher than 0.3; mean wall times were 4
 [Per-run long-context records](data/mtp-long.jsonl) include prefill, elapsed time, token counts and draft acceptance. [Short-request concurrency records](data/short-concurrency.jsonl) contain earlier exploratory tests; complete settings for every historical run were not captured. Neither synthetic markers nor short requests prove complex reasoning, tool calling, vision quality, concurrent 256K capacity, natural completion or sustained stability. Draft acceptance is not answer accuracy. New runs record time, model, prompt hash and an optional user-supplied configuration label; the label does not verify actual engine settings. Alternate 0.3 / 0.5 runs repeatedly and record configuration, temperatures, failures and wall time.
 
 This repository is independent of the [upstream Strata project](https://github.com/Niko1221/Strata).
+
+### Complete performance metrics and individual runs
+
+Each rate and time is an arithmetic mean of the individual requests. Draft acceptance is the sum of accepted drafts divided by the sum of proposed drafts. Prefill rates and durations are reported by the engine; client wall time includes overhead. All requests in this table used zero cached input, generated 512 tokens, and ended with `length`. These numbers are not time to first token (TTFT) or natural task completion time.
+
+| Window / threshold | Runs | Prefill token/s | Prefill s | Decode token/s | Decode s | Wall s | Accepted / drafted | Acceptance |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 / default | 3 | 6940.1 | 37.36 | 89.5 | 5.74 | 43.39 | 864 / 2010 | 43.0% |
+| 4 / 0.3 | 3 | 6953.5 | 37.29 | 99.2 | 5.17 | 42.74 | 918 / 1669 | 55.0% |
+| 5 / 0.3 | 3 | 6901.5 | 37.57 | 101.9 | 5.03 | 42.89 | 987 / 1929 | 51.2% |
+| 5 / 0.5 | 4 | 6892.9 | 37.62 | 106.5 | 4.82 | 42.73 | 1248 / 2009 | 62.1% |
+| 6 / default | 1 | 6940.7 | 37.36 | 86.4 | 5.93 | 43.57 | 333 / 881 | 37.8% |
+
+Individual runs below expose variability; input/output counts and finish status are in the [numeric JSONL records](data/mtp-long.jsonl). `spec5p03a` was a startup HTTP 502 and is excluded below.
+
+| Run tag | Input tokens | Prefill token/s | Prefill s | Decode token/s | Wall s | Accepted / drafted |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 259,288 | 6997.9 | 37.05 | 90.7 | 42.98 | 296 / 645 |
+| baselineagain | 259,289 | 6899.6 | 37.58 | 82.3 | 44.08 | 273 / 717 |
+| baselinefinal | 259,289 | 6922.9 | 37.45 | 95.4 | 43.10 | 295 / 648 |
+| spec4p03 | 259,292 | 6929.7 | 37.42 | 95.4 | 43.07 | 303 / 568 |
+| spec4p03repeat | 259,293 | 6989.2 | 37.10 | 105.6 | 42.22 | 309 / 546 |
+| spec4p03final | 259,293 | 6941.6 | 37.35 | 96.7 | 42.93 | 306 / 555 |
+| spec5p03b | 259,293 | 6902.5 | 37.57 | 96.6 | 43.15 | 329 / 634 |
+| spec5p03c | 259,293 | 6965.5 | 37.23 | 107.9 | 42.25 | 334 / 620 |
+| spec5p03d | 259,293 | 6836.4 | 37.93 | 101.3 | 43.26 | 324 / 675 |
+| spec5p05a | 259,293 | 6865.0 | 37.77 | 97.1 | 43.33 | 299 / 506 |
+| spec5p05b | 259,293 | 6914.5 | 37.50 | 106.2 | 42.60 | 314 / 514 |
+| spec5p05c | 259,293 | 6891.6 | 37.62 | 110.6 | 42.54 | 316 / 499 |
+| spec5p05d | 259,293 | 6900.4 | 37.58 | 112.0 | 42.43 | 319 / 490 |
+| spec6 | 259,289 | 6940.7 | 37.36 | 86.4 | 43.57 | 333 / 881 |
+
+**Other historical long-prompt requests** (one each; complete settings were not retained, so they are not part of the MTP comparison):
+
+| Source | Input tokens | Output tokens | Prefill token/s | Prefill s | Decode token/s | Wall s | Finish | Markers |
+|---|---:|---:|---:|---:|---:|---:|---|---:|
+| long-30k.jsonl | 32,074 | 41 | 5117.9 | 6.27 | 104.7 | 6.72 | stop | 3/3 |
+| long-256k.jsonl | 259,277 | 41 | 6898.0 | 37.59 | 113.5 | 38.22 | stop | 3/3 |
+| long-upgrade-256k.jsonl | 259,282 | 35 | 6938.7 | 37.37 | 86.5 | 38.05 | stop | 3/3 |
+
+[Additional request metrics](data/additional-requests.jsonl) include sanitized usage, timings, finish reasons and tool-call counts from historical long, multi-turn or multimodal, and smoke records. A filename or returned response alone does not prove a test passed or recover missing settings. Full outputs, request bodies and images are not published. Short-prompt concurrency measurements are in [short-concurrency.jsonl](data/short-concurrency.jsonl); configuration is incomplete and these are not 256K concurrency results.
+
+### Historical short and paired request metrics
+
+These historical short-input measurements contain four solo requests and two request pairs per group. Pair aggregate token/s is the sum of both completion token counts divided by pair wall time, averaged across the two pairs. Historical configurations are incomplete; labels identify sources, not controlled comparisons or 256K concurrency results.
+
+| Source label | Solo decode token/s | Solo elapsed s | Pair wall s | Pair aggregate token/s |
+|---|---:|---:|---:|---:|
+| mtp-tune/batch-mtp.jsonl | 120.1 | 4.54 | 6.71 | 152.7 |
+| mtp-tune/spec4-default.jsonl | 127.0 | 4.33 | 6.69 | 153.1 |
+| mtp-tune/spec4-p03.jsonl | 125.0 | 4.38 | 6.71 | 152.6 |
+| mtp-tune/spec6-default.jsonl | 116.7 | 4.83 | 6.73 | 152.3 |
+| optimization/auto.jsonl | 81.6 | 6.84 | 16.23 | 63.3 |
+| optimization/before-auto.jsonl | 135.8 | 4.04 | 6.57 | 155.8 |
+| optimization/concurrency.jsonl | 124.5 | 4.43 | 6.69 | 153.2 |
 
 ### Further evaluation
 
