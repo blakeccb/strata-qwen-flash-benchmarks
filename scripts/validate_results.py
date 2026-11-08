@@ -38,7 +38,11 @@ def main():
     short = ROOT / "data/short-concurrency.jsonl"
     short_rows = [json.loads(line) for line in short.read_text().splitlines() if line.strip()]
     assert all(row["phase"] in ("solo", "pair") for row in short_rows)
-    print(f"validated {len(records)} long records including {sum(r['status'] == 'error' for r in records)} error(s); {len(short_rows)} short records")
+    additional = ROOT / "data/additional-requests.jsonl"
+    extra_rows = [json.loads(line) for line in additional.read_text().splitlines() if line.strip()]
+    assert all(row["source_file"] and row["usage"] is not None and row["timings"] is not None for row in extra_rows)
+    assert all("content" not in row and "id" not in row for row in extra_rows)
+    print(f"validated {len(records)} long records including {sum(r['status'] == 'error' for r in records)} error(s); {len(short_rows)} short records; {len(extra_rows)} additional responses")
 
 if __name__ == "__main__":
     try:
