@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Near-256K synthetic long-context request; endpoint and key come from env."""
+"""Run the published near-256K workload; endpoint and key come from env."""
+import datetime
+import hashlib
 import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 
 base = os.environ.get("STRATA_BASE_URL", "http://127.0.0.1:8095").rstrip("/")
@@ -23,12 +26,25 @@ payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
            "chat_template_kwargs": {"enable_thinking": False}}
 request = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(payload).encode(),
                                  headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+metadata = {"tag": tag, "started_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "workload": "synthetic-repeated-record-v1", "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "model": model, "temperature": 0, "max_tokens": 512, "thinking": False,
+            "configuration_label": os.environ.get("STRATA_CONFIG_LABEL")}
 start = time.monotonic()
-with urllib.request.urlopen(request, timeout=3600) as response:
-    result = json.load(response)
-choice = result["choices"][0]
-content = choice["message"].get("content") or ""
-print(json.dumps({"status": "done", "tag": tag, "elapsed": round(time.monotonic() - start, 2),
-                  "usage": result["usage"], "timings": result.get("timings"),
-                  "finish": choice["finish_reason"],
-                  "markers": {v: v in content for v in ("4827", "7931", "1648")}}, ensure_ascii=False))
+try:
+    with urllib.request.urlopen(request, timeout=3600) as response:
+        result = json.load(response)
+    choice = result["choices"][0]
+    content = choice["message"].get("content") or ""
+    print(json.dumps({"status": "done", **metadata, "elapsed": round(time.monotonic() - start, 2),
+                      "usage": result["usage"], "timings": result.get("timings"),
+                      "finish": choice["finish_reason"],
+                      "markers": {v: v in content for v in ("4827", "7931", "1648")}}, ensure_ascii=False))
+except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError) as exc:
+    # Avoid logging a URL, response body, authorization header or prompt on failure.
+    record = {"status": "error", **metadata, "elapsed": round(time.monotonic() - start, 2),
+              "error_type": type(exc).__name__}
+    if isinstance(exc, urllib.error.HTTPError):
+        record["http_status"] = exc.code
+    print(json.dumps(record, ensure_ascii=False), flush=True)
+    sys.exit(1)
