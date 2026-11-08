@@ -47,12 +47,14 @@ strata launch --plan --family unsloth --model UD-Q4_K_XL \
 
 确认计划中的模型、下载内容、显卡、上下文和 MTP 参数。256K 指输入与输出共享的上下文预算；空间不足时按上游提示降低并发、上下文或选择更小模型。已有 GGUF 分片可参考 `strata launch --help` 的 `--model-path`，传入包含同一模型所有分片的目录；准备后的 pack、MTP 和视觉文件仍可能需要额外准备或下载。
 
-4. **生成密钥并启动。** 以下命令仅示例：密钥保存在当前用户目录，避免写进命令历史。首次启动会下载、准备模型并加载，等待服务就绪；数据目录可按磁盘情况用 `--data-dir` 指定。密钥及数据目录不要提交到 Git。
+4. **生成密钥并启动。** 以下命令仅示例：密钥保存在当前用户目录，避免写进命令历史。首次启动会下载、准备模型并加载，等待服务就绪；数据目录可按磁盘情况用 `--data-dir` 指定。密钥及数据目录不要提交到 Git。下例只在文件不存在时创建密钥，重复执行会保留现有密钥；如需轮换，请有计划地更新服务和客户端。
 
 ```bash
 umask 077
 mkdir -p "$HOME/.config/strata-bench"
-openssl rand -hex 24 > "$HOME/.config/strata-bench/api-key"
+if [ ! -e "$HOME/.config/strata-bench/api-key" ]; then
+  ( set -C; openssl rand -hex 24 > "$HOME/.config/strata-bench/api-key" )
+fi
 export STRATA_API_KEY="$(cat "$HOME/.config/strata-bench/api-key")"
 strata launch --family unsloth --model UD-Q4_K_XL \
   --context 256k --kv int8 --vision gpu --parallel 2 \
@@ -62,7 +64,7 @@ strata launch --family unsloth --model UD-Q4_K_XL \
   --save-preset qwen-mtp-256k
 ```
 
-此命令使用上游自动选择的分层与缓存，**不会自动复刻**实测机的 `[12,24]` 层切分、64 GiB 预算和自定义监督器；请检查启动日志和生成配置。若上游版本改变参数或默认值，以该版本 `--help` 和文档为准。上游 Docker 的标准流程另见 [Docker 指南](https://github.com/Niko1221/Strata/blob/v0.2.12/docs/DOCKER.md)；不要把本仓库测试配置直接当成可直接启动的 Compose 文件。
+[脱敏的实测配置快照](config/measured-settings.json) 列出原服务器主要参数，但它不是可直接运行的配置，也不包含监督器或网络层。此命令使用上游自动选择的分层与缓存，**不会自动复刻**实测机的 `[12,24]` 层切分、64 GiB 预算和自定义监督器；请检查启动日志和生成配置。若上游版本改变参数或默认值，以该版本 `--help` 和文档为准。上游 Docker 的标准流程另见 [Docker 指南](https://github.com/Niko1221/Strata/blob/v0.2.12/docs/DOCKER.md)；不要把本仓库测试配置直接当成可直接启动的 Compose 文件。
 
 5. **访问网页并验证 API。** 在服务器打开 `http://127.0.0.1:8080/`；若页面要求密钥，在 About → Settings 填入上一步生成的密钥。客户端从 `/v1/models` 读取实际模型名；把下例 `<model-id>` 换成返回的 `id`。需要远程访问时，优先使用经认证的隧道或安全代理，不要把无认证接口暴露到公网。
 
@@ -81,7 +83,10 @@ git clone https://github.com/blakeccb/strata-qwen-flash-benchmarks.git
 cd strata-qwen-flash-benchmarks
 export STRATA_BASE_URL='http://127.0.0.1:8080'
 export STRATA_MODEL='<model-id>'
-python3 scripts/long_test.py unique-run-01
+export STRATA_CONFIG_LABEL=window5-p05
+set -o pipefail
+python3 scripts/long_test.py unique-run-01 | tee run-01.jsonl
+python3 scripts/validate_results.py
 ```
 
 ### 测试结果
@@ -98,7 +103,13 @@ python3 scripts/long_test.py unique-run-01
 
 窗口 5 的 0.5 比 0.3 平均快约 4.4%，两组平均总耗时分别是 42.73 秒与 42.89 秒；预填充占据大部分时间。测试按组顺序执行，没有交替运行，样本少；默认阈值组并非与 0.3 的严格对照。另一次窗口 5 / 0.3 请求在服务启动期间得到 502，已保留为错误记录，未计入速度平均值。
 
-[逐次长上下文数据](data/mtp-long.jsonl) 包含预填充、耗时、token、草稿及接受数；[短请求并发记录](data/short-concurrency.jsonl) 包含早期探索性测试，但各历史运行的完整配置未全部保存。短请求与合成标记测试不能证明复杂推理、工具调用、图像理解、两个 256K 请求并发、自然结束或长期稳定性。草稿接受率不等于答案正确率。
+[逐次长上下文数据](data/mtp-long.jsonl) 包含预填充、耗时、token、草稿及接受数；[短请求并发记录](data/short-concurrency.jsonl) 包含早期探索性测试，但各历史运行的完整配置未全部保存。短请求与合成标记测试不能证明复杂推理、工具调用、图像理解、两个 256K 请求并发、自然结束或长期稳定性。草稿接受率不等于答案正确率。新测试记录时间、模型、请求哈希和自填配置标签；标签不是对实际运行参数的自动验证。建议对 0.3 / 0.5 多次交替测试，记录配置、温度、故障和完整请求耗时。
+
+### 后续评测建议
+
+对比参数时先保存配置，按 A/B/B/A 交替执行多轮冷请求，并记录时间、实际生效参数、缓存命中、预填充与解码速度、总耗时、温度、失败及重启。除合成输入外，还应使用经许可的长文档和中英文代码、推理、工具调用与多轮任务，单独核对输出正确性和自然完成情况。不要把个人文档、完整回复或密钥上传到公开仓库。`STRATA_CONFIG_LABEL` 仅供人工标注；改参数可能需要重启，并须在每轮确认实际状态。
+
+本仓库提供 `python3 scripts/validate_results.py` 和 `python3 -m unittest discover -s tests -v`；两者不需要 GPU 或模型。提交时的自动检查也运行这两项。尚未声明许可证；复用代码或数据前请联系仓库所有者确认授权。
 
 ---
 
@@ -147,12 +158,14 @@ strata launch --plan --family unsloth --model UD-Q4_K_XL \
 
 Check the reported model, downloads, GPUs, context and MTP settings. The context budget includes both input and output. Reduce slots, context or model size if it does not fit. For existing GGUF shards, see `--model-path` in `strata launch --help`; use the directory containing all shards for the same model. A prepared pack, MTP and vision files may still need preparation or download.
 
-4. **Create a key and start.** The example keeps the key in the current user's home directory rather than command history. The first run downloads, prepares and loads the model; wait until it is ready. Use `--data-dir` to choose a suitable disk if needed. Do not commit keys or data directories.
+4. **Create a key and start.** The example keeps the key in the current user's home directory rather than command history. The first run downloads, prepares and loads the model; wait until it is ready. Use `--data-dir` to choose a suitable disk if needed. Do not commit keys or data directories. The example creates the key only when the file is absent; repeated runs preserve it. Rotate keys deliberately and update both server and clients.
 
 ```bash
 umask 077
 mkdir -p "$HOME/.config/strata-bench"
-openssl rand -hex 24 > "$HOME/.config/strata-bench/api-key"
+if [ ! -e "$HOME/.config/strata-bench/api-key" ]; then
+  ( set -C; openssl rand -hex 24 > "$HOME/.config/strata-bench/api-key" )
+fi
 export STRATA_API_KEY="$(cat "$HOME/.config/strata-bench/api-key")"
 strata launch --family unsloth --model UD-Q4_K_XL \
   --context 256k --kv int8 --vision gpu --parallel 2 \
@@ -162,7 +175,7 @@ strata launch --family unsloth --model UD-Q4_K_XL \
   --save-preset qwen-mtp-256k
 ```
 
-This uses upstream automatic splitting and cache choices: it **does not automatically recreate** the measured `[12,24]` boundaries, 64 GiB budget or custom supervisor. Inspect the startup log and generated configuration. If options or defaults change, consult that release's `--help` and docs. For standard Docker installation see the [Docker guide](https://github.com/Niko1221/Strata/blob/v0.2.12/docs/DOCKER.md); this repository does not ship a ready-to-run copy of the custom Compose stack.
+The [sanitized measured settings](config/measured-settings.json) describe the original host but are not runnable and omit its supervisor and network layer. This uses upstream automatic splitting and cache choices: it **does not automatically recreate** the measured `[12,24]` boundaries, 64 GiB budget or custom supervisor. Inspect the startup log and generated configuration. If options or defaults change, consult that release's `--help` and docs. For standard Docker installation see the [Docker guide](https://github.com/Niko1221/Strata/blob/v0.2.12/docs/DOCKER.md); this repository does not ship a ready-to-run copy of the custom Compose stack.
 
 5. **Open the web UI and test the API.** Open `http://127.0.0.1:8080/` on the server. If prompted, enter the key under About → Settings. Read the actual model `id` from `/v1/models` and replace `<model-id>` below. For remote access, prefer an authenticated tunnel or secure proxy; do not expose an unauthenticated endpoint publicly.
 
@@ -181,7 +194,10 @@ git clone https://github.com/blakeccb/strata-qwen-flash-benchmarks.git
 cd strata-qwen-flash-benchmarks
 export STRATA_BASE_URL='http://127.0.0.1:8080'
 export STRATA_MODEL='<model-id>'
-python3 scripts/long_test.py unique-run-01
+export STRATA_CONFIG_LABEL=window5-p05
+set -o pipefail
+python3 scripts/long_test.py unique-run-01 | tee run-01.jsonl
+python3 scripts/validate_results.py
 ```
 
 ### Benchmark results
@@ -198,6 +214,12 @@ Each successful run used approximately 259,293 input tokens, `temperature=0`, th
 
 At window 5, the 0.5 mean was about 4.4% higher than 0.3; mean wall times were 42.73 s and 42.89 s respectively, dominated by prefill. Runs were grouped rather than interleaved, with few samples. Default-threshold runs are not controlled 0.3 comparisons. One additional window-5/0.3 request got HTTP 502 while the server was starting; it is retained as an error record and excluded from throughput averages.
 
-[Per-run long-context records](data/mtp-long.jsonl) include prefill, elapsed time, token counts and draft acceptance. [Short-request concurrency records](data/short-concurrency.jsonl) contain earlier exploratory tests; complete settings for every historical run were not captured. Neither synthetic markers nor short requests prove complex reasoning, tool calling, vision quality, concurrent 256K capacity, natural completion or sustained stability. Draft acceptance is not answer accuracy.
+[Per-run long-context records](data/mtp-long.jsonl) include prefill, elapsed time, token counts and draft acceptance. [Short-request concurrency records](data/short-concurrency.jsonl) contain earlier exploratory tests; complete settings for every historical run were not captured. Neither synthetic markers nor short requests prove complex reasoning, tool calling, vision quality, concurrent 256K capacity, natural completion or sustained stability. Draft acceptance is not answer accuracy. New runs record time, model, prompt hash and an optional user-supplied configuration label; the label does not verify actual engine settings. Alternate 0.3 / 0.5 runs repeatedly and record configuration, temperatures, failures and wall time.
 
 This repository is independent of the [upstream Strata project](https://github.com/Niko1221/Strata).
+
+### Further evaluation
+
+Before comparing settings, save the configuration; alternate cold requests A/B/B/A over several rounds and record the timestamp, actual settings, cache hits, prefill and decode rates, wall time, temperature, failures and restarts. In addition to synthetic input, use appropriately licensed long documents and Chinese/English coding, reasoning, tool-calling and multi-turn tasks. Check correctness and natural completion separately. Do not publish private documents, complete replies or keys. `STRATA_CONFIG_LABEL` is a manual label, not an engine-state check; changing settings may require a restart and each run needs its actual state verified.
+
+Run `python3 scripts/validate_results.py` and `python3 -m unittest discover -s tests -v` without a GPU or model. The repository's automated checks run both. No license has yet been declared; contact the owner for permission before reusing code or data.
